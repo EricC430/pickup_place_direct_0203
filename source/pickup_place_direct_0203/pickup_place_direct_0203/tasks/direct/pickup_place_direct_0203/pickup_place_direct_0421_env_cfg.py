@@ -20,7 +20,7 @@ from isaaclab.markers.config import FRAME_MARKER_CFG
 from .jetrover import JETROVER_CFG
 
 # ObjectFolder 物體ID列表 # [39, 41]
-SELECTED_OBJECT_IDS = [22, 25, 26, 27, 31, 70, 68, 96] #[25,68] #[39, 41, 68, 25] #[62, 68] # [22, 25, 26, 27, 31, 39, 41, 62, 68, 70, 93, 95, 96, 21] # 21 bottle 29 wood 40 28
+SELECTED_OBJECT_IDS = [25,26,27,68,70]#[22, 25, 26, 27, 31, 39, 41, 62, 68, 70, 93, 95, 96]# #[39, 41, 68, 25] #[62, 68] # [22, 25, 26, 27, 31, 39, 41, 62, 68, 70, 93, 95, 96, 21] # 21 bottle 29 wood 40 28
 
 # Create a smaller frame marker for better visualization (ISSUE FIX #4)
 FRAME_MARKER_SMALL_CFG = FRAME_MARKER_CFG.copy()
@@ -28,7 +28,7 @@ FRAME_MARKER_SMALL_CFG.markers["frame"].scale = (0.05, 0.05, 0.05)
 
 
 @configclass
-class PickupPlaceDirect0203EnvCfg(DirectRLEnvCfg):
+class PickupPlaceDirect0421EnvCfg(DirectRLEnvCfg):
     """Direct workflow configuration for pickup-place task with JetRover (no vision)."""
 
     # 環境基本設定
@@ -37,11 +37,11 @@ class PickupPlaceDirect0203EnvCfg(DirectRLEnvCfg):
     
     # Debug visualization settings
     # Debug visualization settings
-    debug_vis = True
+    debug_vis = False
     debug_vis_settings = {
-        "target": True,
-        "com": True,
-        "bbox": True,
+        "target": False,
+        "com": False,
+        "bbox": False,
     }
 
     # action/observation space
@@ -108,14 +108,14 @@ class PickupPlaceDirect0203EnvCfg(DirectRLEnvCfg):
                 solver_velocity_iteration_count=2,
                 max_angular_velocity=1000.0,
                 max_linear_velocity=1000.0,
-                max_depenetration_velocity=0.6,#1.0, #0.5,
+                max_depenetration_velocity=3.0,#0.5,#
                 disable_gravity=False,
             ),
             # [0410 ANTI-PENETRATION] Strategy 1: Per-collider contact/rest offsets
             # contact_offset=0.005 creates a 5mm detection buffer before actual geometric contact
             # This gives the solver more time to generate response impulses for thin objects
             collision_props=CollisionPropertiesCfg(
-                contact_offset=0.03,#0.1, #0.02,
+                contact_offset=0.005,#0.02,#
                 rest_offset=0.0,
             ),
         ),
@@ -139,18 +139,18 @@ class PickupPlaceDirect0203EnvCfg(DirectRLEnvCfg):
     action_scale = 1.0
 
     # reward scales
-    rew_scale_reach = 0.8 #0.9 #1.2 #0.25#0.005#0.2
-    rew_scale_lift = 12.0 # Best Practice: ~15x Reaching scale
-    rew_scale_lift_vel = 1.0
-    rew_scale_close = 1.0 # Best Practice: Strong closing signal
-    rew_scale_goal = 15.0 # Best Practice: High incentive for tracking
-    rew_scale_goal_fine = 5.0
-    rew_scale_lift_bonus = 5.0 # Best Practice: Strong reward for stable hold
-    rew_scale_drop = -10.0 # Best Practice: Severe penalty for losing object
-    rew_scale_action = -0.005 # Global penalty
-    rew_scale_action_near_goal = -0.05  # Increased now that rewards are higher
-    rew_scale_action_approach = -0.01
-    rew_scale_joint_vel = 0.0
+    rew_scale_reach = 0.8 #1.2 #0.25#0.005#0.2
+    rew_scale_lift = 0.0 #3.0 # 2.5
+    rew_scale_lift_vel = 0.0 #0.3
+    rew_scale_close = 1.0 #0.3 # [0403] 0.5→2.0: 4x increase to make grasp signal competitive with reaching
+    rew_scale_goal = 0.0
+    rew_scale_goal_fine = 0.0
+    rew_scale_lift_bonus = 0.0 #0.7 #1.2 # Bonus for stable lifting success
+    rew_scale_drop = 0.0 #-5.0 # Penalty for dropping the object after it was lifted
+    rew_scale_action = 0.0 
+    rew_scale_action_near_goal = 0.0 #-0.01  # Penalty for trembling when the goal is reached
+    rew_scale_action_approach = 0.0 #-0.05
+    rew_scale_joint_vel = 0.0  # Start at 0; curriculum will ramp up after reaching_success threshold
     
     # Joint Limit and Smoothness Settings
     # [0415 ADAPTIVE VEL PENALTY] Raised threshold so gentle motion is free;
@@ -230,53 +230,52 @@ class PickupPlaceDirect0203EnvCfg(DirectRLEnvCfg):
         "goal_fine_std": 0.05,
         "goal_fine_min_height": 0.20,
         "object_is_reached_threshold": 0.06,
-        "goal_tracking_threshold": 0.15,
     }
 
     # Curriculum Settings
     curriculum_settings = {
-        # "lifting_object": {
-        #     "target": 2.5, #1.8, #3.0, #0.4,
-        #     "threshold": 0.8, #0.6
-        #     "metric": "reaching_success", 
-        #     "dependency": None
-        # },
-        # "lifting_object_velocity": {
-        #     "target": 0.3, #0.2, #0.8, #0.1,
-        #     "threshold": 0.8, 
-        #     "metric": "reaching_success", 
-        #     "dependency": None
-        # },
-        # "lifting_bonus": {
-        #     "target": 1.2, #1.0, 
-        #     "threshold": 0.8, 
-        #     "metric": "reaching_success", 
-        #     "dependency": None
-        # },
+        "lifting_object": {
+            "target": 3.0, #1.8, #3.0, #0.4,
+            "threshold": 0.8, #0.6
+            "metric": "reaching_success", 
+            "dependency": None
+        },
+        "lifting_object_velocity": {
+            "target": 0.8, #0.2, #0.8, #0.1,
+            "threshold": 0.8, 
+            "metric": "reaching_success", 
+            "dependency": None
+        },
+        "lifting_bonus": {
+            "target": 1.2, #1.0, 
+            "threshold": 0.8, 
+            "metric": "reaching_success", 
+            "dependency": None
+        },
         # "close_reward": {
         #     "target": 0.025, #0.005, #0.001,
         #     "threshold": 0.6, 
         #     "metric": "reaching_success", 
         #     "dependency": None
         # },
-        # "object_goal_tracking": {
-        #     "target": 5.0, #3.0, #0.1, #8.0
-        #     "threshold": 0.5, #0.6,#0.4, 
-        #     "metric": "episode_lifting_success", #"reaching_success", #"episode_lifting_success", 
-        #     "dependency": "lifting_object",#None#"lifting_object",
-        #     "increment": 0.1,#0.05,  # Gradual warm-up
-        #     "interval": 50,    # Check success every 25 steps (fast check)
-        #     "increment_interval": 100, # But only increase weight every 100 steps (slow warm-up)
-        # },
-        # "object_goal_tracking_fine_grained": {
-        #     "target": 2.0, #1.0, #0.2, #2.0
-        #     "threshold": 0.5, 
-        #     "metric": "episode_lifting_success", 
-        #     "dependency": "lifting_object",
-        #     "increment": 0.05, #0.025, 
-        #     "interval": 50,
-        #     "increment_interval": 100,
-        # },
+        "object_goal_tracking": {
+            "target": 5.0, #3.0, #0.1, #8.0
+            "threshold": 0.5, #0.6,#0.4, 
+            "metric": "episode_lifting_success", #"reaching_success", #"episode_lifting_success", 
+            "dependency": "lifting_object",#None#"lifting_object",
+            "increment": 0.1,#0.05,  # Gradual warm-up
+            "interval": 50,    # Check success every 25 steps (fast check)
+            "increment_interval": 100, # But only increase weight every 100 steps (slow warm-up)
+        },
+        "object_goal_tracking_fine_grained": {
+            "target": 2.0, #1.0, #0.2, #2.0
+            "threshold": 0.5, 
+            "metric": "episode_lifting_success", 
+            "dependency": "lifting_object",
+            "increment": 0.05, #0.025, 
+            "interval": 50,
+            "increment_interval": 100,
+        },
         "action_rate": {
             "target": -0.001,  #-0.00005, #-0.001
             "threshold": 0.5, 
@@ -290,10 +289,26 @@ class PickupPlaceDirect0203EnvCfg(DirectRLEnvCfg):
             "target": -0.005,  # Stronger penalty when close
             "threshold": 0.5, 
             "metric": "reaching_success", # Start penalizing jitter once it learns to reach
-            "dependency": "lifting_object",
+            "dependency": None,
             "increment": 0.0005,
             "interval": 20,
             "increment_interval": 100,
+        },
+        "action_rate_near_goal": {
+            "target": -0.005,  # Stronger penalty when close
+            "threshold": 0.5, 
+            "metric": "object_goal_tracking_success", # Start penalizing jitter once it learns to reach
+            "dependency": "object_goal_tracking",
+            "increment": 0.0005,
+            "interval": 20,
+            "increment_interval": 100,
+        },
+        "drop_penalty": {
+            "target": -5.0,   # Severe red-line penalty
+            "threshold": 0.5, 
+            "metric": "episode_lifting_success", # Only punish drops once lifting is learned
+            "dependency": "lifting_object",
+            "interval": 50,
         },
         # [0415 ADAPTIVE VEL PENALTY] joint_vel 懲罰隨 reaching 成功率動態提升。
         # 設計原則：
@@ -305,47 +320,29 @@ class PickupPlaceDirect0203EnvCfg(DirectRLEnvCfg):
         #   - increment_interval: 200 步一次，比 lifting 的 100 步慢，
         #     給 Agent 更多緩衝時間習慣懲罰再繼續加強
         "joint_vel": {
-            "target": -0.02,
+            "target": -0.005,
             "threshold": 0.50,
             "metric": "reaching_success",
             "dependency": None,         # 不依賴任何前置課程，只要 reaching 到位就觸發
-            "increment": 0.0002,         # 每次增加 0.0002
+            "increment": 0.0002,         # 每次增加 0.0002 (朝 -0.005 方向)
             "interval": 50,              # 每 50 步檢查一次 reaching_success
             "increment_interval": 200,   # 每 200 步才真正增加一次懲罰
         },
-        # "drop": {
-        #     "target": -5.0,
-        #     "threshold": 0.2,           # 20% lifting success 達到後觸發
-        #     "metric": "lifting_success",
-        #     "dependency": "lifting_object",
-        #     "increment": 0.1,           # 每一步增加 0.1 懲罰
-        #     "interval": 50,
-        #     "increment_interval": 100,
-        # },
-        # "action_rate_near_goal": {
-        #     "target": -0.05,
-        #     "threshold": 0.1,           # 10% goal success 達到後觸發
-        #     "metric": "object_goal_tracking_success",
-        #     "dependency": "object_goal_tracking",
-        #     "increment": 0.005,
-        #     "interval": 50,
-        #     "increment_interval": 100,
-        # },
     }
 
     # Manual Curriculum Weight Initialization (for resuming training)
     # If a term is present here, it will initialize with this value instead of 0.0
     curriculum_starting_weights = {
-        "lifting_object": 12.0,
-        "lifting_object_velocity": 1.0,
-        "lifting_bonus": 5.0,
-        "close_reward": 1.0,
-        "object_goal_tracking": 15.0,
-        "object_goal_tracking_fine_grained": 5.0,
-        "drop": -10.0,
-        "action_rate_near_goal": -0.05,
-        "action_rate": -0.005,
-        "action_rate_approach": -0.01,
+        # "lifting_object": 3.0,
+        # "lifting_object_velocity": 0.3,
+        # "lifting_bonus": 0.7,
+        "close_reward": 1.0,  # [0403] Match rew_scale_close
+        # "object_goal_tracking": 7.0,
+        # "object_goal_tracking_fine_grained": 2.0,
+        # "action_rate": -0.001,
+        # "action_rate_approach": -0.05,  # [0403] Match rew_scale_action_approach
+        # [0415] joint_vel 現在由 curriculum 管理，從 0.0 開始遞增懲罰，不再在此指定固定初始值
+        # "joint_vel": -0.001,
     }
 
     # Object Configuration
@@ -354,7 +351,7 @@ class PickupPlaceDirect0203EnvCfg(DirectRLEnvCfg):
     def __post_init__(self):
         super().__post_init__()
         self.sim.render_interval = self.decimation
-        self.viewer.eye = [3.0, 3.0, 2.5]
+        self.viewer.eye = [5.0, 5.0, 3.0]
         if self.use_46_dim_obs:
             self.observation_space = 46
         

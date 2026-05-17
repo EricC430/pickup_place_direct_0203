@@ -32,19 +32,19 @@ from isaaclab.sim.spawners.shapes import SphereCfg
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.math import quat_apply, subtract_frame_transforms
 
-from .pickup_place_direct_0203_env_cfg import PickupPlaceDirect0203EnvCfg, SELECTED_OBJECT_IDS
+from .pickup_place_direct_0421_env_cfg import PickupPlaceDirect0421EnvCfg, SELECTED_OBJECT_IDS
 from .mdp import observations as mdp_obs
 from .mdp import rewards as mdp_rewards
 from .mdp import terminations as mdp_term
 from .mdp import curriculum as mdp_curriculum
 
 
-class PickupPlaceDirect0203Env(DirectRLEnv):
+class PickupPlaceDirect0421Env(DirectRLEnv):
     """Direct RL environment for pickup-place task with JetRover."""
 
-    cfg: PickupPlaceDirect0203EnvCfg
+    cfg: PickupPlaceDirect0421EnvCfg
 
-    def __init__(self, cfg: PickupPlaceDirect0203EnvCfg, render_mode: str | None = None, **kwargs):
+    def __init__(self, cfg: PickupPlaceDirect0421EnvCfg, render_mode: str | None = None, **kwargs):
         # Initialize object randomization info BEFORE super().__init__
         # (because super().__init__ calls _setup_scene which needs these attributes)
         self._object_ids = SELECTED_OBJECT_IDS
@@ -70,8 +70,6 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
             "object_goal_tracking": 0.0,
             "object_goal_tracking_fine_grained": 0.0,
             "action_rate": 0.0,
-            "action_rate_near_goal": 0.0,
-            "drop": 0.0,
             "joint_vel": 0.0,
         }
 
@@ -113,7 +111,7 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
             "reward_action_rate_near_goal": torch.zeros(self.num_envs, device=self.device),
             "reward_action_rate_approach": torch.zeros(self.num_envs, device=self.device),
             "reward_joint_vel": torch.zeros(self.num_envs, device=self.device),
-            "reward_drop_penalty": torch.zeros(self.num_envs, device=self.device),
+            "reward_drop": torch.zeros(self.num_envs, device=self.device),
         }
         
         # Buffer to hold finished episode stats to be logged in the next step
@@ -133,9 +131,11 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
         self.episode_anytime_lift = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self.episode_anytime_goal = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         
-        # [0425] Diagnostic: Initial object position tracking for push penalty
+        # [0421] Buffers for static inputs
+        self.static_obj_pos = torch.zeros((self.num_envs, 3), device=self.device)
+        self.static_bbox = torch.zeros((self.num_envs, 24), device=self.device)
         self.initial_world_pos = torch.zeros((self.num_envs, 3), device=self.device)
-        
+
         print(f"\n[Info] Environment initialized with {self._num_objects} possible object types")
 
         # Command generation
@@ -384,7 +384,6 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
         if hasattr(self, "ee_frame"):
             try:
                 self.ee_frame.update()
-                
             except Exception:
                 pass  # Frame transformer may need scene updates, continue if fails
         
@@ -539,64 +538,71 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
 
     def _get_observations(self) -> dict:
         """Collect observations (state-based, no vision)."""
-        # Joint positions/velocities (Relative to default)
-        if hasattr(self.cfg, "use_46_dim_obs") and self.cfg.use_46_dim_obs:
-            # Previous incorrect version: missing gripper pos and vel (5 + 5 = 10 instead of 12)
-            joint_indices = list(self._arm_joint_indices)
-        else:
-            joint_indices = list(self._arm_joint_indices) + list(self._gripper_joint_idx)
-            
-        jpos = self.joint_pos[:, joint_indices] - self.robot.data.default_joint_pos[:, joint_indices]
-        jvel = self.joint_vel[:, joint_indices] - self.robot.data.default_joint_vel[:, joint_indices]
+        # --- Teacher definitions (46-dim dynamic, no gripper) ---
+        teacher_joint_indices = list(self._arm_joint_indices)
+        jpos_teacher = self.joint_pos[:, teacher_joint_indices] - self.robot.data.default_joint_pos[:, teacher_joint_indices]
+        jvel_teacher = self.joint_vel[:, teacher_joint_indices] - self.robot.data.default_joint_vel[:, teacher_joint_indices]
+        
+        obj_pos_dyn = mdp_obs.object_position_in_robot_root_frame(self, object_cfg=SceneEntityCfg("object"))
+        bbox_dyn = mdp_obs.object_bbox_corners_relative(self, object_cfg=SceneEntityCfg("object"))
 
-        # Object position in robot frame
-        obj_pos = mdp_obs.object_position_in_robot_root_frame(self, object_cfg=SceneEntityCfg("object"))
-
-        # Bounding box corners
-        bbox = mdp_obs.object_bbox_corners_relative(self, object_cfg=SceneEntityCfg("object"))
-
-        # Target position (Fix: Convert from Env Frame -> Robot Frame)
-        # 1. Env Frame -> World Frame
+        # Target position (Ego-centric)
         target_pos_w = self.target_poses + self.scene.env_origins
-        # 2. World Frame -> Robot Frame (Ego-centric)
         target_in_robot, _ = subtract_frame_transforms(
             self.scene["robot"].data.root_pos_w, 
             self.scene["robot"].data.root_quat_w, 
             target_pos_w
         )
-        target = target_in_robot
 
-        # Add Noise (if corruption enabled, typically checked via self.cfg.observation_noise_scale > 0)
-        # Using simple additive Gaussian noise logic similar to ManagerBasedEnv defaults
+        # --- Policy definitions (48-dim static, with gripper) ---
+        policy_joint_indices = list(self._arm_joint_indices) + list(self._gripper_joint_idx)
+        jpos_policy = self.joint_pos[:, policy_joint_indices] - self.robot.data.default_joint_pos[:, policy_joint_indices]
+        jvel_policy = self.joint_vel[:, policy_joint_indices] - self.robot.data.default_joint_vel[:, policy_joint_indices]
+
+        # Use static locked object variables
+        obj_pos_static = self.static_obj_pos.clone()
+        bbox_static = self.static_bbox.clone()
+
+        # Add Noise (if corruption enabled)
         if self.cfg.observation_noise_scale > 0.0:
             noise_scale = self.cfg.observation_noise_scale
-            jpos += torch.randn_like(jpos) * 0.0001 * noise_scale
-            jvel += torch.randn_like(jvel) * 0.001 * noise_scale
-            obj_pos += torch.randn_like(obj_pos) * 0.001 * noise_scale
-            # bbox is derived from object pos/rot, technically should add noise to source or result.
-            # Here adding to result for simplicity matching 'object_bbox' noise
-            bbox += torch.randn_like(bbox) * 0.001 * noise_scale
-            # target typically noiseless in obs, but 'target_object_position' might have noise. 
-            # Keeping target clean for now as it's a command.
+            # Apply to policy (student)
+            jpos_policy += torch.randn_like(jpos_policy) * 0.0001 * noise_scale
+            jvel_policy += torch.randn_like(jvel_policy) * 0.001 * noise_scale
+            obj_pos_static += torch.randn_like(obj_pos_static) * 0.001 * noise_scale
+            bbox_static += torch.randn_like(bbox_static) * 0.001 * noise_scale
+            
+            # Apply to teacher
+            jpos_teacher += torch.randn_like(jpos_teacher) * 0.0001 * noise_scale
+            jvel_teacher += torch.randn_like(jvel_teacher) * 0.001 * noise_scale
+            obj_pos_dyn += torch.randn_like(obj_pos_dyn) * 0.001 * noise_scale
+            bbox_dyn += torch.randn_like(bbox_dyn) * 0.001 * noise_scale
 
-        # NOTE: Target marker visualization is now updated only in _reset_scene_elements
-        # This avoids excessive position updates every step and makes debugging clearer
-        # by showing the target only at episode reset time
-
-        # Combine all
-        obs = torch.cat(
+        obs_policy = torch.cat(
             [
-                jpos.view(self.num_envs, -1),
-                jvel.view(self.num_envs, -1),
-                obj_pos,
-                bbox,
-                target,
+                jpos_policy.view(self.num_envs, -1),
+                jvel_policy.view(self.num_envs, -1),
+                obj_pos_static,
+                bbox_static,
+                target_in_robot,
                 self.actions,
             ],
             dim=1,
         )
 
-        return {"policy": obs}
+        obs_teacher = torch.cat(
+            [
+                jpos_teacher.view(self.num_envs, -1),
+                jvel_teacher.view(self.num_envs, -1),
+                obj_pos_dyn,
+                bbox_dyn,
+                target_in_robot,
+                self.actions,
+            ],
+            dim=1,
+        )
+
+        return {"policy": obs_policy, "teacher": obs_teacher}
 
     def _get_rewards(self) -> torch.Tensor:
         """Compute rewards using curriculum-weighted terms."""
@@ -653,7 +659,7 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
             object_cfg=SceneEntityCfg("object"),
             ee_frame_cfg=SceneEntityCfg("ee_frame")
         )
-        
+
         # [DROP PENALTY] Access the is_dropped flag computed during _get_dones()
         if hasattr(self, "is_dropped") and self.is_dropped is not None:
             rewards_dict["drop_penalty"] = self.is_dropped.float()
@@ -728,15 +734,6 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
 
         # Add Bonus Reward for Stable Lifting
         rewards_dict["lifting_bonus"] = is_lifted.float()
-        
-        # [SUCCESS DIAGNOSTICS] Print actual physical quantities every 100 steps
-        if self.common_step_counter % 100 == 0:
-            dist_val = mdp_rewards.object_bbox_ee_distance_real(self, SceneEntityCfg("object"), SceneEntityCfg("ee_frame"))[0].item()
-            h_val = mdp_rewards._get_object_bottom_z(self, SceneEntityCfg("object"))[0].item()
-            is_reached_val = is_reached[0].item()
-            is_lifted_val = is_lifted[0].item()
-            print(f"\033[1;33m[Success Diag] Step {self.common_step_counter} | Env 0: Dist={dist_val:.4f} (Thresh=0.06), Height={h_val:.4f} (Thresh=0.10), Reach={is_reached_val}, Lift={is_lifted_val}\033[0m")
-        
         # ===============================================================
 
         # Get curriculum weights (default scale from cfg)
@@ -751,7 +748,7 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
         w_action_near_goal = self._curriculum_term_weights.get("action_rate_near_goal", getattr(self.cfg, "rew_scale_action_near_goal", 0.0))
         w_action_approach = self._curriculum_term_weights.get("action_rate_approach", self.cfg.rew_scale_action_approach)
         w_joint = self._curriculum_term_weights.get("joint_vel", self.cfg.rew_scale_joint_vel)
-        w_drop = self._curriculum_term_weights.get("drop", getattr(self.cfg, "rew_scale_drop", -5.0))
+        w_drop = self._curriculum_term_weights.get("drop_penalty", getattr(self.cfg, "rew_scale_drop", 0.0))
 
         # Compute total reward
         total_reward = (
@@ -794,7 +791,7 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
         if w_joint != 0.0:
             self.episode_sums["reward_joint_vel"] += torch.nan_to_num(w_joint * rewards_dict["joint_vel"], nan=0.0)
         if w_drop != 0.0:
-            self.episode_sums["reward_drop_penalty"] += torch.nan_to_num(w_drop * rewards_dict["drop_penalty"], nan=0.0)
+            self.episode_sums["reward_drop"] += torch.nan_to_num(w_drop * rewards_dict["drop_penalty"], nan=0.0)
 
         # Store metrics in extras for curriculum and logging
         # [FIX] New dictionary instance every step to prevent RSL-RL pointer sharing
@@ -882,9 +879,9 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
                 # but do merge all per-step metrics from _get_rewards()
                 if key not in extras["log"]["episode"] or key in [
                     "reaching_success", "lifting_success", "episode_lifting_success", "object_goal_tracking_success",
-                    "reward_reaching", "reward_lifting", "reward_lifting_bonus", "reward_lifting_vel", 
+                    "reward_reaching", "reward_lifting", "reward_lifting_vel", 
                     "reward_close", "reward_goal", "reward_goal_fine",
-                    "reward_action_rate", "reward_action_rate_near_goal", "reward_action_rate_approach", "reward_joint_vel", "reward_drop_penalty"
+                    "reward_action_rate", "reward_action_rate_near_goal", "reward_action_rate_approach", "reward_joint_vel", "reward_drop"
                 ]:
                     extras["log"]["episode"][key] = value
         
@@ -893,7 +890,6 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
         if hasattr(self, "_latched_reward_logs") and self._latched_reward_logs:
             for name, value in self._latched_reward_logs.items():
                 # [FIX] Don't overwrite per-step instant metrics with episode-end snapshots
-                # reaching/lifting/goal success should reflect real-time status, not terminal-state
                 if name not in ["reaching_success", "lifting_success", "object_goal_tracking_success"]:
                     extras["log"]["episode"][name] = value
 
@@ -963,44 +959,41 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
             self, rect_range=self.cfg.workspace_range, asset_cfg=SceneEntityCfg("object")
         )
 
-        # [0412 ANTI-PENETRATION] Physics explosion detection.
-        # CCD + solve_articulation_contact_last can cause articulations to enter unrecoverable
-        # "death spiral" states where joint positions spiral to 11k+ rad. Once this happens,
-        # the entire environment's physics state is corrupt and produces garbage observations
-        # for all remaining steps. Detecting and resetting early prevents value_function_loss
-        # explosions that destroy the learned policy.
-        # Threshold: ±2π rad deviation from default = articulation has broken down
+        # [0412 ANTI-PENETRATION] Physics explosion detection
         joint_indices = list(self._arm_joint_indices) + list(self._gripper_joint_idx)
         jpos_deviation = (self.joint_pos[:, joint_indices] - self.robot.data.default_joint_pos[:, joint_indices]).abs()
         physics_exploded = (jpos_deviation > 6.2832).any(dim=1)  # ±2π rad
+        
+        # [0422 DIAGNOSTIC] Disable physics reset if requested
+        if hasattr(self.cfg, "disable_physics_reset") and self.cfg.disable_physics_reset:
+            physics_exploded[:] = False
+
         if physics_exploded.any():
             n_exploded = physics_exploded.sum().item()
             max_dev = jpos_deviation.max().item()
             print(f"⚡ [PHYSICS RESET] {n_exploded} env(s) terminated: joint deviation {max_dev:.1f} rad > 2π (Step {self.common_step_counter})")
 
-        # [0425 DIAGNOSTIC] Disable physics reset if requested
-        if hasattr(self.cfg, "disable_physics_reset") and self.cfg.disable_physics_reset:
-            physics_exploded[:] = False
-
-        # [0425 PUSH PENALTY] Check if object moved too far away while not grasped (Synced from 0421)
+        # [0421 STRICT GRASP] Check if object moved too far away while not grasped
         current_world_pos = self.scene["object"].data.root_pos_w
         # Use XY distance only to prevent vertical drop from triggering penalty
         dist_moved = torch.norm(current_world_pos[:, :2] - self.initial_world_pos[:, :2], dim=-1)
         
-        # Get EE position (end-effector frame)
         ee_pos = self.scene["ee_frame"].data.target_pos_w[..., 0, :]
         gripper_dist = torch.norm(ee_pos - current_world_pos, dim=-1)
         
         # Pushed away by more than 15cm, and gripper is more than 15cm away
         moved_too_far = (dist_moved > 0.15) & (gripper_dist > 0.15)
 
-        # [0425 DIAGNOSTIC] Disable push penalty if requested
+        # [0422 DIAGNOSTIC] Disable push penalty if requested
         if hasattr(self.cfg, "disable_push_penalty") and self.cfg.disable_push_penalty:
             moved_too_far[:] = False
+        
+        # Optionally logging warning for push penalty
+        if moved_too_far.any():
+            pass # can add log here if desired
 
         # [DROP PENALTY] Termination if the object was lifted but is currently dropped
         # [FIX] Use stable lifting result from _get_rewards() to track genuinely grasped lifts
-        # This prevents false-positive drops from arm-bumped objects that weren't actually grasped
         if hasattr(self, "_is_stable_lifted") and self._is_stable_lifted is not None:
             self.has_been_lifted_buffer |= self._is_stable_lifted
         
@@ -1010,14 +1003,14 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
         
         is_dropped = self.has_been_lifted_buffer & (~is_currently_above)
         self.is_dropped = is_dropped
+        
         # [0425 DIAGNOSTIC] Disable object drop reset if requested
         if hasattr(self.cfg, "disable_drop_reset") and self.cfg.disable_drop_reset:
             is_dropped[:] = False
-
+            
         if is_dropped.any() and (self.common_step_counter % 50 == 0):
             print(f"📉 [DROP TERMINATION] {is_dropped.sum().item()} env(s) dropped the object!")
 
-        # [DIAGNOSTIC] respect all diagnostic flags
         terminated = out_of_bounds | physics_exploded | moved_too_far | is_dropped
 
         # Return as (terminated, time_out) where terminated includes out_of_bounds and physics explosion
@@ -1040,6 +1033,7 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
         # as the sensors might not be fully initialized
         try:
             is_reached = mdp_rewards.object_is_reached(self, threshold=self.cfg.reward_settings["object_is_reached_threshold"], object_cfg=SceneEntityCfg("object"))
+            # Use stable check for episode logging too
             # Use robust check for episode logging too (matches step logic)
             is_lifted = mdp_rewards.check_stable_lifting_success(
                 self, 
@@ -1329,8 +1323,12 @@ class PickupPlaceDirect0203Env(DirectRLEnv):
         self.scene.update(dt=0.0)
         # 3. Refresh markers using the synchronized data
         self._update_debug_vis()
-        
-        # [0426] Update initial object position for push penalty tracking
-        # We must do this AFTER scene.update(dt=0.0) to ensure we capture the teleported position
+
+        # [0421] Lock static inputs for observations after the object has dropped/teleported
+        obj_pos_all = mdp_obs.object_position_in_robot_root_frame(self, object_cfg=SceneEntityCfg("object"))
+        bbox_all = mdp_obs.object_bbox_corners_relative(self, object_cfg=SceneEntityCfg("object"))
         world_pos_all = self.scene["object"].data.root_pos_w
+
+        self.static_obj_pos[env_ids] = obj_pos_all[env_ids].clone()
+        self.static_bbox[env_ids] = bbox_all[env_ids].clone()
         self.initial_world_pos[env_ids] = world_pos_all[env_ids].clone()
