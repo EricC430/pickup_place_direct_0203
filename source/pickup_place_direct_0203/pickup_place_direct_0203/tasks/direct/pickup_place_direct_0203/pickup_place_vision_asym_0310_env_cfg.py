@@ -2,15 +2,15 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
-import math
+
 from isaaclab.utils import configclass
 from .pickup_place_direct_0203_vision_env_cfg import PickupPlaceDirect0203VisionEnvCfg
-from isaaclab.sensors import ContactSensorCfg
+import math
 
 @configclass
-class PickupPlaceVisionAsym0318EnvCfg(PickupPlaceDirect0203VisionEnvCfg):
+class PickupPlaceVisionAsym0310EnvCfg(PickupPlaceDirect0203VisionEnvCfg):
     """
-    Configuration for Asymmetric Vision Environment with Multi-Frame CNN Features and Point Cloud. (0313 Version)
+    Configuration for Asymmetric Vision Environment with Multi-Frame CNN Features and Point Cloud.
     """
     
     # ========== CAMERA INTRINSIC PARAMETERS FOR 3D PROJECTION ==========
@@ -60,33 +60,7 @@ class PickupPlaceVisionAsym0318EnvCfg(PickupPlaceDirect0203VisionEnvCfg):
     # Policy (Actor) observation structure:
     # JPos(6) + JVel(6) + JErr(6) + Last4Actions(24) + VisionLow(512) + PointNet(512) + VisionHigh(64)
     # = 6 + 6 + 6 + 24 + 512 + 512 + 64 = 1130 dims
-    
-    @property
-    def observation_space(self) -> dict:
-        if getattr(self, "use_raw_observations", False):
-            # Modular observation space (FLATTENED at top level for rsl_rl RolloutStorage compatibility)
-            return {
-                "policy_proprio": 42,
-                "policy_images": (4, 3, 80, 128), # Time, C(RGB), H, W
-                "policy_points": (4, 1024, 3),    # Time, N, 3
-                "policy_high_res": 64,
-                "critic": 73
-            }
-        else:
-            return 1130
-    
-    # ========== SENSORS ==========
-    # 左夾爪感測器
-    left_finger_force: ContactSensorCfg = ContactSensorCfg(
-        prim_path="/World/envs/env_.*/Robot/l_out_link",
-        filter_prim_paths_expr=["/World/envs/env_.*/Object"],
-    )
-
-    # 右夾爪感測器
-    right_finger_force: ContactSensorCfg = ContactSensorCfg(
-        prim_path="/World/envs/env_.*/Robot/r_out_link",
-        filter_prim_paths_expr=["/World/envs/env_.*/Object"],
-    )
+    observation_space = 1130
     
     # Critic observation structure:
     # JPos(6) + JVel(6) + Last_4_Actions(24) + Obj_Pos(3) + Obj_BBox(24) + BasketPos(3) + ContactFriction(7)
@@ -100,29 +74,7 @@ class PickupPlaceVisionAsym0318EnvCfg(PickupPlaceDirect0203VisionEnvCfg):
     arm_init_offset_range = {
         "joint1": (0.0, 0.0),                           # Base rotation (yaw)
         "joint2": (-30 * math.pi/180, -30 * math.pi/180), # Shoulder (pitch) -30 deg
-        "joint3": (45 * math.pi/180, 45 * math.pi/180),  # Elbow (pitch) 60 deg
+        "joint3": (45 * math.pi/180, 45 * math.pi/180),   # Elbow (pitch) 45 deg
         "joint4": (119 * math.pi/180, 119 * math.pi/180), # Wrist (pitch) 119 deg
         "joint5": (0.0, 0.0),                           # Wrist (roll)
     }
-    # ========== PRE-TRAINED WEIGHTS (Optional) ==========
-    # If provided, the environment will automatically load these weights during initialization.
-    # This allows standard RL scripts (like train.py) to use BC-trained vision encoders.
-    vision_weights_path: str | None = None #"/workspace/test_isaaclab/pickup_place_direct_0203/logs/vision_weights_standalone.pt"
-
-    # ========== TRAINABLE ENCODERS CONFIGURATION ==========
-    # If True, the environment returns raw images and point clouds instead of extracted features.
-    # This allows the RL algorithm to optimize the vision backbones.
-    use_raw_observations: bool = False
-
-    # ========== 0318 DEBUG SNAPSHOT CONFIGURATION ==========
-    # Enable a specific debug snapshot for 0318 version.
-    # Saves High-Resolution camera images (VisionHigh 64) for ALL environments.
-    # Captures once per episode, for exactly N episodes.
-    debug_vision_snapshot_0318_enable: bool = False
-    debug_vision_snapshot_0318_max_episodes: int = 3
-    debug_vision_snapshot_0318_dir: str = "debug_snapshots_0318"
-
-    def __post_init__(self):
-        super().__post_init__()
-        # Enable contact sensors for the robot fingertips
-        self.robot_cfg.spawn.activate_contact_sensors = True

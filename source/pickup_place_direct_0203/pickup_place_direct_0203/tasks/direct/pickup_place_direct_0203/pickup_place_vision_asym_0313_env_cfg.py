@@ -8,7 +8,7 @@ from .pickup_place_direct_0203_vision_env_cfg import PickupPlaceDirect0203Vision
 from isaaclab.sensors import ContactSensorCfg
 
 @configclass
-class PickupPlaceVisionAsym0318EnvCfg(PickupPlaceDirect0203VisionEnvCfg):
+class PickupPlaceVisionAsym0313EnvCfg(PickupPlaceDirect0203VisionEnvCfg):
     """
     Configuration for Asymmetric Vision Environment with Multi-Frame CNN Features and Point Cloud. (0313 Version)
     """
@@ -60,20 +60,7 @@ class PickupPlaceVisionAsym0318EnvCfg(PickupPlaceDirect0203VisionEnvCfg):
     # Policy (Actor) observation structure:
     # JPos(6) + JVel(6) + JErr(6) + Last4Actions(24) + VisionLow(512) + PointNet(512) + VisionHigh(64)
     # = 6 + 6 + 6 + 24 + 512 + 512 + 64 = 1130 dims
-    
-    @property
-    def observation_space(self) -> dict:
-        if getattr(self, "use_raw_observations", False):
-            # Modular observation space (FLATTENED at top level for rsl_rl RolloutStorage compatibility)
-            return {
-                "policy_proprio": 42,
-                "policy_images": (4, 3, 80, 128), # Time, C(RGB), H, W
-                "policy_points": (4, 1024, 3),    # Time, N, 3
-                "policy_high_res": 64,
-                "critic": 73
-            }
-        else:
-            return 1130
+    observation_space = 1130
     
     # ========== SENSORS ==========
     # 左夾爪感測器
@@ -104,25 +91,10 @@ class PickupPlaceVisionAsym0318EnvCfg(PickupPlaceDirect0203VisionEnvCfg):
         "joint4": (119 * math.pi/180, 119 * math.pi/180), # Wrist (pitch) 119 deg
         "joint5": (0.0, 0.0),                           # Wrist (roll)
     }
-    # ========== PRE-TRAINED WEIGHTS (Optional) ==========
-    # If provided, the environment will automatically load these weights during initialization.
-    # This allows standard RL scripts (like train.py) to use BC-trained vision encoders.
-    vision_weights_path: str | None = None #"/workspace/test_isaaclab/pickup_place_direct_0203/logs/vision_weights_standalone.pt"
-
-    # ========== TRAINABLE ENCODERS CONFIGURATION ==========
-    # If True, the environment returns raw images and point clouds instead of extracted features.
-    # This allows the RL algorithm to optimize the vision backbones.
-    use_raw_observations: bool = False
-
-    # ========== 0318 DEBUG SNAPSHOT CONFIGURATION ==========
-    # Enable a specific debug snapshot for 0318 version.
-    # Saves High-Resolution camera images (VisionHigh 64) for ALL environments.
-    # Captures once per episode, for exactly N episodes.
-    debug_vision_snapshot_0318_enable: bool = False
-    debug_vision_snapshot_0318_max_episodes: int = 3
-    debug_vision_snapshot_0318_dir: str = "debug_snapshots_0318"
-
+    
     def __post_init__(self):
         super().__post_init__()
+        # Restore original viewer settings from 0203
+        self.viewer.eye = [3.0, 3.0, 2.5]
         # Enable contact sensors for the robot fingertips
         self.robot_cfg.spawn.activate_contact_sensors = True

@@ -9,7 +9,7 @@ import os
 from torch.distributions import Normal
 from tensordict import TensorDict
 from rsl_rl.modules import ActorCritic
-from ..vision_encoder import ResNetVisonEncoder, PointNetEncoder
+from pickup_place_direct_0203.tasks.direct.pickup_place_direct_0203.utils.vision_encoder import ResNetVisonEncoder, PointNetEncoder
 
 class VisionAsymActorCritic(ActorCritic):
     """

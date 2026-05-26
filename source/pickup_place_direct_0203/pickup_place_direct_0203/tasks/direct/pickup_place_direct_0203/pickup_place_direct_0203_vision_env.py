@@ -16,7 +16,7 @@ import numpy as np
 
 from .pickup_place_direct_0203_env import PickupPlaceDirect0203Env
 from .pickup_place_direct_0203_vision_env_cfg import PickupPlaceDirect0203VisionEnvCfg
-from .vision_encoder import get_vision_encoder
+from .utils.vision_encoder import get_vision_encoder
 from .mdp import rewards as mdp_rewards
 from isaaclab.managers import SceneEntityCfg
 
@@ -95,7 +95,7 @@ class PickupPlaceDirect0203VisionEnv(PickupPlaceDirect0203Env):
         self.yolo_detector = None
         if self.cfg.debug_vision_snapshots and getattr(self.cfg, "debug_vision_enable_yolo_visualization", True):
             try:
-                from .yolo_detector import YOLODetector
+                from .utils.yolo_detector import YOLODetector
                 self.yolo_detector = YOLODetector(
                     model_name=getattr(self.cfg, "yolo_model_name", "yolov8m"),
                     device=getattr(self.cfg, "yolo_device", str(self.device)),

@@ -17,7 +17,7 @@ from isaaclab.utils import configclass
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg, OffsetCfg
 from isaaclab.markers.config import FRAME_MARKER_CFG
 
-from .jetrover import JETROVER_CFG
+from .utils.jetrover import JETROVER_CFG
 
 # ObjectFolder 物體ID列表 # [39, 41]
 SELECTED_OBJECT_IDS = [22, 25, 26, 27, 31, 70, 68, 96] #[25,68] #[39, 41, 68, 25] #[62, 68] # [22, 25, 26, 27, 31, 39, 41, 62, 68, 70, 93, 95, 96, 21] # 21 bottle 29 wood 40 28

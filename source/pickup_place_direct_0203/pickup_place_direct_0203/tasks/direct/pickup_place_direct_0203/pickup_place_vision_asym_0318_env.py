@@ -13,12 +13,12 @@ import os
 
 from .pickup_place_direct_0203_vision_env import PickupPlaceDirect0203VisionEnv
 from .pickup_place_vision_asym_0318_env_cfg import PickupPlaceVisionAsym0318EnvCfg
-from .vision_encoder import PointNetEncoder
+from .utils.vision_encoder import PointNetEncoder
 from .mdp import observations as mdp_obs
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.math import subtract_frame_transforms
 
-from .performance_monitor import get_perf_monitor
+from .utils.performance_monitor import get_perf_monitor
 import torch.nn as nn
 # from .diagnostic_utils import DiagnosticProbe
 

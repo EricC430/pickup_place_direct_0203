@@ -53,21 +53,14 @@ def gripper_open_close_phases(
     object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
     joint_name: str = "r_joint",
-    close_threshold: float = 0.05,
+    close_threshold: float = 0.08,
     open_target: float = 1.569,
     close_target: float = 0.0,
 ) -> torch.Tensor:
     """
-    Conditional gripper reward with stability bonus (0402 version).
-    
-    Phase 1 (Approach): dist >= close_threshold → reward openness
-    Phase 2 (Grasp):    dist <  close_threshold → reward closedness + stability
-    
-    Stability Bonus: Rewards the gripper being closed AND low-velocity (stable hold),
-                     penalizing high-frequency chattering that prevents real grasps.
-    Transition Bonus: One-shot encouragement for initial closing motion.
+    Simplified gripper reward: Rewards closing the gripper only when close to the object.
+    Focuses exclusively on grasp quality within the threshold range.
     """
-
     ee_pos = env.scene[ee_frame_cfg.name].data.target_pos_w[..., 0, :]
     obj_pos = env.scene[object_cfg.name].data.root_com_pos_w[:, :3]
     dist = torch.norm(obj_pos - ee_pos, dim=-1)
@@ -76,52 +69,81 @@ def gripper_open_close_phases(
     joint_indices, _ = robot.find_joints(joint_name)
     gripper_idx = joint_indices[0]
     gripper_pos = robot.data.joint_pos[:, gripper_idx]
-    gripper_vel = robot.data.joint_vel[:, gripper_idx]
 
-    # Openness calculation (1.0 = fully open, 0.0 = fully closed)
-    openness = torch.clamp(gripper_pos / open_target, 0.0, 1.0)
-    closedness = 1.0 - openness
-
-    # ===== Phase 1: Approach (dist >= threshold) =====
-    # Reward keeping gripper open while moving toward the object
-    is_approaching = (dist >= close_threshold).float()
-    reaching_reward = 1.0 - torch.tanh(dist / 0.10)
-    approach_reward = openness * reaching_reward * is_approaching
-
-    # ===== Phase 2: Grasp (dist < threshold) =====
-    is_grasping = (dist < close_threshold).float()
+    # Only reward grasping when within proximity threshold
+    is_in_range = (dist <= close_threshold).float()
     
-    # 2a. Base grasp reward: closedness (0=open → 0 pts, 1=closed → 1 pt)
-    #     [0403 FIX] Amplified 3x to make closing signal competitive with reaching (~0.5/step)
-    #     Without this, grasp reward (~0.15/step) is drowned by reaching and the policy
-    #     converges to "hover near object with gripper open" local optimum.
-    grasp_reward_base = closedness * 3.0
-    
-    # 2b. Transition Bonus: +0.2 if gripper is actively closing (vel < -0.1)
-    #     [0403 FIX] Increased from 0.1 → 0.2 to reward initial close motion more strongly
-    is_closing = (gripper_vel < -0.1).float()
-    transition_bonus = 0.2 * is_closing
-    
-    # 2c. Stability Bonus: Rewards closed + low velocity (stable hold)
-    #     Prevents ±7 rad/s chattering. Max value = closedness * 1.0 when vel=0.
-    #     NOT overlapping with lifting_bonus: lifting_bonus requires object height > 6cm,
-    #     stability_bonus only requires gripper_pos near closed + low vel.
-    #     [0403 FIX] Scale 0.3 → 0.5 to further penalize chattering vs stable hold
-    vel_stability = 1.0 - torch.clamp(torch.abs(gripper_vel) / 3.0, 0.0, 1.0)
-    stability_bonus = closedness * vel_stability * 0.5
-    
-    grasp_total = (grasp_reward_base + transition_bonus + stability_bonus) * is_grasping
+    # Grasp quality: 0.0 (fully open) to 1.0 (fully closed)
+    grasp_quality = 1.0 - (gripper_pos / open_target)
+    grasp_quality = torch.clamp(grasp_quality, 0.0, 1.0)
 
-    # [0402 OOM FIX] Reduced print frequency to minimize CPU-GPU sync overhead
-    if (env.common_step_counter // 50) % 200 == 0:
-        # Compute target gripper pos from previous action to show policy intent
-        prev_act = env.previous_actions if hasattr(env, 'previous_actions') else env.actions
-        _g_scale = env.cfg.action_cfg["gripper_scale"]   # 0.785
-        _g_offset = env.cfg.action_cfg["gripper_offset"]  # 0.785
-        _target_grip = (prev_act[:, 5] * env.cfg.action_scale * _g_scale + _g_offset).clamp(0.0, 1.57)
-        print(f"Step {env.common_step_counter} env 0: gripper_pos={gripper_pos[0]:.3f}, target={_target_grip[0]:.3f}, vel={gripper_vel[0]:.3f}, dist={dist[0]:.3f}, approach_rew={approach_reward[0]:.3f}, grasp_rew={grasp_total[0]:.3f}, stab={stability_bonus[0]:.3f}")
+    return grasp_quality * is_in_range
 
-    return approach_reward + grasp_total
+    # """
+    # Conditional gripper reward with stability bonus (0402 version).
+    
+    # Phase 1 (Approach): dist >= close_threshold → reward openness
+    # Phase 2 (Grasp):    dist <  close_threshold → reward closedness + stability
+    
+    # Stability Bonus: Rewards the gripper being closed AND low-velocity (stable hold),
+    #                  penalizing high-frequency chattering that prevents real grasps.
+    # Transition Bonus: One-shot encouragement for initial closing motion.
+    # """
+
+    # ee_pos = env.scene[ee_frame_cfg.name].data.target_pos_w[..., 0, :]
+    # obj_pos = env.scene[object_cfg.name].data.root_com_pos_w[:, :3]
+    # dist = torch.norm(obj_pos - ee_pos, dim=-1)
+
+    # robot = env.scene["robot"]
+    # joint_indices, _ = robot.find_joints(joint_name)
+    # gripper_idx = joint_indices[0]
+    # gripper_pos = robot.data.joint_pos[:, gripper_idx]
+    # gripper_vel = robot.data.joint_vel[:, gripper_idx]
+
+    # # Openness calculation (1.0 = fully open, 0.0 = fully closed)
+    # openness = torch.clamp(gripper_pos / open_target, 0.0, 1.0)
+    # closedness = 1.0 - openness
+
+    # # ===== Phase 1: Approach (dist >= threshold) =====
+    # # Reward keeping gripper open while moving toward the object
+    # is_approaching = (dist >= close_threshold).float()
+    # reaching_reward = 1.0 - torch.tanh(dist / 0.10)
+    # approach_reward = openness * reaching_reward * is_approaching
+
+    # # ===== Phase 2: Grasp (dist < threshold) =====
+    # is_grasping = (dist < close_threshold).float()
+    
+    # # 2a. Base grasp reward: closedness (0=open → 0 pts, 1=closed → 1 pt)
+    # #     [0403 FIX] Amplified 3x to make closing signal competitive with reaching (~0.5/step)
+    # #     Without this, grasp reward (~0.15/step) is drowned by reaching and the policy
+    # #     converges to "hover near object with gripper open" local optimum.
+    # grasp_reward_base = closedness * 3.0
+    
+    # # 2b. Transition Bonus: +0.2 if gripper is actively closing (vel < -0.1)
+    # #     [0403 FIX] Increased from 0.1 → 0.2 to reward initial close motion more strongly
+    # is_closing = (gripper_vel < -0.1).float()
+    # transition_bonus = 0.2 * is_closing
+    
+    # # 2c. Stability Bonus: Rewards closed + low velocity (stable hold)
+    # #     Prevents ±7 rad/s chattering. Max value = closedness * 1.0 when vel=0.
+    # #     NOT overlapping with lifting_bonus: lifting_bonus requires object height > 6cm,
+    # #     stability_bonus only requires gripper_pos near closed + low vel.
+    # #     [0403 FIX] Scale 0.3 → 0.5 to further penalize chattering vs stable hold
+    # vel_stability = 1.0 - torch.clamp(torch.abs(gripper_vel) / 3.0, 0.0, 1.0)
+    # stability_bonus = closedness * vel_stability * 0.5
+    
+    # grasp_total = (grasp_reward_base + transition_bonus + stability_bonus) * is_grasping
+
+    # # [0402 OOM FIX] Reduced print frequency to minimize CPU-GPU sync overhead
+    # if (env.common_step_counter // 50) % 200 == 0:
+    #     # Compute target gripper pos from previous action to show policy intent
+    #     prev_act = env.previous_actions if hasattr(env, 'previous_actions') else env.actions
+    #     _g_scale = env.cfg.action_cfg["gripper_scale"]   # 0.785
+    #     _g_offset = env.cfg.action_cfg["gripper_offset"]  # 0.785
+    #     _target_grip = (prev_act[:, 5] * env.cfg.action_scale * _g_scale + _g_offset).clamp(0.0, 1.57)
+    #     print(f"Step {env.common_step_counter} env 0: gripper_pos={gripper_pos[0]:.3f}, target={_target_grip[0]:.3f}, vel={gripper_vel[0]:.3f}, dist={dist[0]:.3f}, approach_rew={approach_reward[0]:.3f}, grasp_rew={grasp_total[0]:.3f}, stab={stability_bonus[0]:.3f}")
+
+    # return approach_reward + grasp_total
 
     # ee_pos = env.scene[ee_frame_cfg.name].data.target_pos_w[..., 0, :]
     # obj_pos = env.scene[object_cfg.name].data.root_com_pos_w[:, :3]

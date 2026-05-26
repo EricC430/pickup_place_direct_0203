@@ -199,7 +199,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if is_modular_vision:
         print(f"[INFO] Setting up Modular Vision Architecture (Train Encoders: {args_cli.train_encoders}).")
         # Load the fresh configuration for training from scratch
-        from pickup_place_direct_0203.tasks.direct.pickup_place_direct_0203.agents.rsl_rl_ppo_asym_fresh_refined_cfg import PPORunnerCfg as FreshPPORunnerCfg
+        from pickup_place_direct_0203.tasks.direct.pickup_place_direct_0203.agents.rsl_rl.ppo_asym_fresh_refined_cfg import PPORunnerCfg as FreshPPORunnerCfg
         
         # Merge fresh config into existing agent_cfg (which was loaded by task registration)
         fresh_cfg = FreshPPORunnerCfg()

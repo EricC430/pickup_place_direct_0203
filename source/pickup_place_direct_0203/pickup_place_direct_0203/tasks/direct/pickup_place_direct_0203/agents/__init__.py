@@ -2,3 +2,5 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+
+from .rsl_rl.vision_asym_actor_critic import VisionAsymActorCritic

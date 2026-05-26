@@ -28,7 +28,7 @@ from .pickup_place_vision_asym_0318_env import PickupPlaceVisionAsym0318Env
 from .pickup_place_vision_asym_0403_env_cfg import PickupPlaceVisionAsym0403EnvCfg
 from .mdp import rewards as mdp_rewards
 from .mdp import observations as mdp_obs
-from .cgn_visualizer import CgnDebugVisualizer
+from .utils.cgn_visualizer import CgnDebugVisualizer
 
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils.math import (
@@ -198,7 +198,7 @@ class PickupPlaceVisionAsym0403Env(PickupPlaceVisionAsym0318Env):
 
         self._cgn_load_attempted = True
         try:
-            from .grasp_predictor import GraspPredictor
+            from .utils.grasp_predictor import GraspPredictor
 
             self._grasp_predictor = GraspPredictor(
                 cgn_ckpt_dir=self.cfg.cgn_ckpt_dir,
